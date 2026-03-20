@@ -12,27 +12,33 @@ interface CheckAnswersRequest {
   apiKey?: string
 }
 
-const getSystemPrompt = () => `You are an expert at evaluating test answers. Your task is to determine if the user's selected answer is correct for each question.
+const getSystemPrompt = () => `You are an expert at evaluating multiple-choice test answers. Your task is to determine the CORRECT answer for each question and check if the user's answer matches.
 
-IMPORTANT: You must respond with ONLY valid JSON, no additional text. The JSON must follow this exact structure:
+CRITICAL INSTRUCTIONS:
+1. Read each question carefully
+2. Determine which option (0, 1, 2, or 3) is the CORRECT answer based on knowledge
+3. Compare with the user's answer
+4. Provide clear explanations
+
+IMPORTANT: You must know or determine the correct answer. Do NOT just mark things as correct/incorrect randomly. Use your knowledge to find the right answer.
+
+Return ONLY valid JSON:
 {
   "results": [
     {
       "questionId": 1,
       "isCorrect": true,
       "correctAnswer": 0,
-      "explanation": "Brief explanation of why the answer is correct or incorrect"
+      "explanation": "Clear explanation of why this is the correct answer"
     }
   ]
 }
 
 Rules:
-- For each question, evaluate the user's answer against the correct answer
-- If the user's answer is correct, set isCorrect to true
-- If the user's answer is incorrect, set isCorrect to false and provide the correct answer index
-- If the user didn't answer (userAnswer is null), set isCorrect to false and provide the correct answer
-- Provide a brief explanation for each answer
-- Be thorough and accurate in your evaluation`
+- isCorrect: true if userAnswer matches the correct answer, false otherwise
+- correctAnswer: the INDEX (0-3) of the actually correct option
+- If userAnswer is null, isCorrect is false
+- Provide educational explanations`
 
 export async function POST(request: NextRequest) {
   try {
@@ -44,16 +50,16 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = getSystemPrompt()
-    const userPrompt = `Please evaluate these test answers and provide the correct answers with explanations:
+    const userPrompt = `Please evaluate these test answers. For each question, determine the CORRECT answer based on your knowledge, then check if the user's answer is correct.
 
-${JSON.stringify(questions, null, 2)}
+Questions to evaluate:
+ ${JSON.stringify(questions, null, 2)}
 
-Respond with the JSON structure specified.`
+Respond with the JSON structure. Make sure to provide the actual correct answer for each question.`
 
     let response: any
 
     if (apiKey) {
-      // Use custom API key
       switch (provider) {
         case 'openai':
           response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -68,7 +74,7 @@ Respond with the JSON structure specified.`
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
               ],
-              temperature: 0.3,
+              temperature: 0.1,
               max_tokens: 4000
             })
           }).then(res => res.json())
@@ -85,7 +91,7 @@ Respond with the JSON structure specified.`
                 parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
               }],
               generationConfig: {
-                temperature: 0.3,
+                temperature: 0.1,
                 maxOutputTokens: 4000
               }
             })
@@ -114,7 +120,7 @@ Respond with the JSON structure specified.`
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
               ],
-              temperature: 0.3,
+              temperature: 0.1,
               max_tokens: 4000
             })
           }).then(res => res.json())
@@ -128,12 +134,12 @@ Respond with the JSON structure specified.`
               'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-              model: 'meta/llama-3.1-405b-instruct',
+              model: 'z-ai/glm5',
               messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
               ],
-              temperature: 0.3,
+              temperature: 0.1,
               max_tokens: 4000
             })
           }).then(res => res.json())
@@ -143,16 +149,14 @@ Respond with the JSON structure specified.`
           return NextResponse.json({ error: 'Invalid provider' }, { status: 400 })
       }
     } else {
-      // Use z-ai-web-dev-sdk
       const zai = await ZAI.create()
-
       response = await zai.chat.completions.create({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
         model: provider === 'openai' ? 'gpt-4o' : provider === 'gemini' ? 'gemini-2.0-flash' : 'deepseek-chat',
-        temperature: 0.3,
+        temperature: 0.1,
         max_tokens: 4000
       })
     }
@@ -163,12 +167,18 @@ Respond with the JSON structure specified.`
       return NextResponse.json({ error: 'No response from AI' }, { status: 500 })
     }
 
-    // Parse the JSON response
     try {
       let jsonContent = content
       const jsonMatch = content.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (jsonMatch) {
         jsonContent = jsonMatch[1].trim()
+      }
+      if (!jsonContent.startsWith('{')) {
+        const jsonStart = content.indexOf('{')
+        const jsonEnd = content.lastIndexOf('}')
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          jsonContent = content.substring(jsonStart, jsonEnd + 1)
+        }
       }
 
       const data = JSON.parse(jsonContent)
