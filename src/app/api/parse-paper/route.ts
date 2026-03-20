@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import ZAI from 'z-ai-web-dev-sdk'
 
 interface ParsePaperRequest {
-  images?: string[] // Multiple images
-  imageBase64?: string // Single image (backward compatible)
+  images?: string[]
+  imageBase64?: string
   provider: 'openai' | 'gemini' | 'deepseek' | 'nvidia'
   apiKey?: string
 }
@@ -11,46 +11,31 @@ interface ParsePaperRequest {
 const getSystemPrompt = () => `You are an expert at parsing and extracting questions from question papers, exams, and quizzes from images.
 
 Your task is to carefully analyze ALL provided images and extract ALL questions visible across them. For each question:
-1. Extract the full question text
-2. Extract all answer options (A, B, C, D, or similar formats)
-3. Identify the correct answer if it's marked in the image
-4. If correct answer is not marked, set correctAnswer to null
+1. Extract the full question text EXACTLY as written
+2. Extract all answer options (A, B, C, D, or similar formats) - remove the letter prefix
+3. Set correctAnswer to null (we don't know which is correct)
+4. Keep the question number as part of the question text
 
-IMPORTANT: You must respond with ONLY valid JSON, no additional text. The JSON must follow this exact structure:
-{
-  "title": "Extracted test title or 'Question Paper'",
-  "description": "Brief description of the paper content",
-  "sourceType": "parsed_paper",
-  "questions": [
-    {
-      "id": 1,
-      "question": "The complete question text",
-      "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
-      "correctAnswer": null,
-      "explanation": ""
-    }
-  ]
-}
+CRITICAL: You must respond with ONLY valid JSON. No explanations, no markdown formatting around the JSON. Just the raw JSON object.
+
+Example output format:
+{"title":"SSC CGL Number System Questions","description":"Questions from SSC CGL exam on Number System","sourceType":"parsed_paper","questions":[{"id":1,"question":"If a number is multiplied by 5 and then 5 is added, the result is 30. What is the number?","options":["4","5","6","7"],"correctAnswer":null,"explanation":""}]}
 
 Rules:
-- Combine questions from ALL provided images
-- Extract questions EXACTLY as written in the image
-- Preserve the original numbering/ordering across pages
-- For options, extract the full text without the A/B/C/D prefix
-- If a question has more or fewer than 4 options, adapt accordingly but maintain at least 2 options
-- If correct answers are visible (circled, checked, etc.), include them; otherwise set correctAnswer to null
-- Handle different question formats: multiple choice, true/false, fill-in-the-blank (convert to MCQ if possible)
-- For essay/short answer questions, create placeholder options if needed
-- Be thorough - don't miss any questions
-- Handle handwritten text if present
-- If the images are unclear or no questions are found, return an empty questions array with an error message in the description`
+- Extract questions EXACTLY as written in the image, including any Hindi/English text
+- For options, extract the full text after the letter (A, B, C, D)
+- If a question has 4 options, include all 4
+- If a question has 5 options (a, b, c, d, e), include all 5
+- Number questions sequentially starting from 1
+- Do NOT skip any questions
+- Handle both English and Hindi text
+- Return ONLY the JSON, no other text`
 
 export async function POST(request: NextRequest) {
   try {
     const body: ParsePaperRequest = await request.json()
     const { images, imageBase64, provider, apiKey } = body
 
-    // Support both single image (backward compatible) and multiple images
     const imageUrls = images || (imageBase64 ? [imageBase64] : [])
 
     if (imageUrls.length === 0) {
@@ -62,12 +47,10 @@ export async function POST(request: NextRequest) {
 
     let response: any
 
-    // Ensure proper data URL format for all images
     const formattedImages = imageUrls.map(img =>
       img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`
     )
 
-    // Build content array with all images
     const content: any[] = []
     formattedImages.forEach(imgUrl => {
       content.push({
@@ -81,7 +64,6 @@ export async function POST(request: NextRequest) {
     })
 
     if (apiKey) {
-      // Use custom API key
       switch (provider) {
         case 'openai':
           response = await fetch('https://api.openai.com/v1/chat/completions', {
@@ -180,7 +162,6 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Invalid provider' }, { status: 400 })
       }
     } else {
-      // Use z-ai-web-dev-sdk
       const zai = await ZAI.create()
 
       response = await zai.chat.completions.create({
@@ -201,39 +182,28 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No response from AI' }, { status: 500 })
     }
 
-    // Parse the JSON response
     try {
       let jsonContent = content_result
+      
       const jsonMatch = content_result.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (jsonMatch) {
         jsonContent = jsonMatch[1].trim()
       }
+      
+      if (!jsonContent.startsWith('{')) {
+        const jsonStart = content_result.indexOf('{')
+        const jsonEnd = content_result.lastIndexOf('}')
+        if (jsonStart !== -1 && jsonEnd !== -1) {
+          jsonContent = content_result.substring(jsonStart, jsonEnd + 1)
+        }
+      }
 
       const testData = JSON.parse(jsonContent)
 
-      // Validate that we have questions
       if (!testData.questions || testData.questions.length === 0) {
         return NextResponse.json({
-          error: 'No questions could be extracted from the images. Please ensure the images clearly show questions.',
+          error: 'No questions could be extracted. Please ensure the images clearly show questions with options.',
           title: testData.title || 'Question Paper',
           description: testData.description || 'Failed to extract questions',
-          questions: []
-        }, { status: 400 })
-      }
-
-      return NextResponse.json(testData)
-    } catch {
-      console.error('Failed to parse AI response:', content_result)
-      return NextResponse.json({
-        error: 'Failed to parse extracted questions',
-        raw: content_result
-      }, { status: 500 })
-    }
-
-  } catch (error: any) {
-    console.error('Parse paper error:', error)
-    return NextResponse.json({
-      error: error.message || 'Failed to parse question paper'
-    }, { status: 500 })
-  }
-}
+          questions: [],
+          raw: content
