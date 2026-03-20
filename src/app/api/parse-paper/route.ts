@@ -8,23 +8,38 @@ interface ParsePaperRequest {
   apiKey?: string
 }
 
-const getSystemPrompt = () => `You are an expert at parsing and extracting questions from question papers.
+const getSystemPrompt = () => `You are an expert at extracting questions from exam papers. Your job is to accurately read and extract questions from images.
 
-Extract ALL questions from the image. For each question:
-1. Extract the question text
-2. Extract all options (A, B, C, D text without the letter)
-3. Set correctAnswer to null
+CRITICAL INSTRUCTIONS:
+1. Look at the image carefully - it contains a question paper with multiple choice questions
+2. Extract EACH question exactly as written (keep the original wording)
+3. Extract each option EXACTLY as written - do not modify, paraphrase, or change any text
+4. Keep Hindi text in Hindi, English text in English
+5. Do NOT guess or invent any content - only extract what is visible
 
-IMPORTANT: Return ONLY valid JSON. No markdown. No explanations.
+For each question extract:
+- question: The full question text exactly as shown (include question number like "1.", "Q1", etc.)
+- options: Array of exactly 4 option texts (extract ONLY the text part, not A/B/C/D letters)
+- correctAnswer: Set to null (we don't know the answers)
+- explanation: Empty string
 
-Example:
-{"title":"SSC CGL Questions","description":"Number System questions","sourceType":"parsed_paper","questions":[{"id":1,"question":"What is 2+2?","options":["3","4","5","6"],"correctAnswer":null,"explanation":""}]}
+Return ONLY this JSON format with no additional text:
+{
+  "title": "Title from paper or 'Question Paper'",
+  "description": "Brief description",
+  "sourceType": "parsed_paper",
+  "questions": [
+    {
+      "id": 1,
+      "question": "Exact question text here",
+      "options": ["Option A text", "Option B text", "Option C text", "Option D text"],
+      "correctAnswer": null,
+      "explanation": ""
+    }
+  ]
+}
 
-Rules:
-- Extract ALL visible questions
-- Keep question numbers in the text
-- Handle Hindi/English text
-- Return ONLY the JSON object`
+IMPORTANT: If you cannot clearly read a question or option, skip it. Only extract clearly visible questions.`
 
 export async function POST(request: NextRequest) {
   try {
@@ -38,7 +53,7 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = getSystemPrompt()
-    const userPrompt = `Extract all questions from this question paper image. Return valid JSON only.`
+    const userPrompt = `Please carefully extract all multiple choice questions from this question paper image. Extract the questions and options EXACTLY as written. Return valid JSON only.`
 
     let response: any
 
@@ -73,7 +88,7 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.2,
+              temperature: 0.1,
               max_tokens: 16000
             })
           }).then(res => res.json())
@@ -98,7 +113,7 @@ export async function POST(request: NextRequest) {
                 parts: geminiParts
               }],
               generationConfig: {
-                temperature: 0.2,
+                temperature: 0.1,
                 maxOutputTokens: 16000
               }
             })
@@ -128,7 +143,7 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.2,
+              temperature: 0.1,
               max_tokens: 16000
             })
           }).then(res => res.json())
@@ -142,12 +157,12 @@ export async function POST(request: NextRequest) {
               'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-              model: 'meta/llama-3.2-90b-vision-instruct',
+              model: 'z-ai/glm5',
               messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.2,
+              temperature: 0.1,
               max_tokens: 4096
             })
           }).then(res => res.json())
@@ -158,13 +173,12 @@ export async function POST(request: NextRequest) {
       }
     } else {
       const zai = await ZAI.create()
-
       response = await zai.chat.completions.createVision({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content }
         ],
-        temperature: 0.2,
+        temperature: 0.1,
         max_tokens: 16000
       })
     }
@@ -178,12 +192,10 @@ export async function POST(request: NextRequest) {
 
     try {
       let jsonContent = content_result
-      
       const jsonMatch = content_result.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (jsonMatch) {
         jsonContent = jsonMatch[1].trim()
       }
-      
       if (!jsonContent.startsWith('{')) {
         const jsonStart = content_result.indexOf('{')
         const jsonEnd = content_result.lastIndexOf('}')
