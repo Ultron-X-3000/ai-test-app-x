@@ -9,17 +9,38 @@ interface GenerateTestRequest {
   apiKey?: string
 }
 
-const getSystemPrompt = (questionCount: number, difficulty: string) => `You are an expert test creator. Create ${questionCount} multiple-choice questions at ${difficulty} difficulty based on the provided images.
+const getSystemPrompt = (questionCount: number, difficulty: string) => `You are an expert test creator. Create ${questionCount} high-quality multiple-choice questions based on the provided images.
 
-Return ONLY valid JSON with this structure:
-{"title":"Test Title","description":"Description","questions":[{"id":1,"question":"Question text?","options":["A","B","C","D"],"correctAnswer":0,"explanation":"Why this is correct"}]}
+CRITICAL INSTRUCTIONS:
+1. Analyze the image content carefully
+2. Create questions that test understanding of what is shown in the image
+3. Each question must have exactly 4 options
+4. Only ONE option should be correct
+5. The correctAnswer is the INDEX (0, 1, 2, or 3) of the correct option
+6. Double-check that your correctAnswer points to the actually correct option
 
-Rules:
-- correctAnswer is the index (0-3) of correct option
-- Each question has exactly 4 options
-- Questions should test understanding of image content
-- ${difficulty === 'easy' ? 'Basic recall questions' : difficulty === 'medium' ? 'Application questions' : 'Complex synthesis questions'}
-- Provide clear explanations`
+Question Quality Rules:
+- ${difficulty === 'easy' ? 'Basic recall and recognition questions' : difficulty === 'medium' ? 'Application and analysis questions' : 'Complex synthesis and evaluation questions'}
+- Make questions clear and unambiguous
+- All 4 options should be plausible but only ONE correct
+- Include a brief explanation for why the answer is correct
+
+Return ONLY valid JSON:
+{
+  "title": "Test Title",
+  "description": "Description",
+  "questions": [
+    {
+      "id": 1,
+      "question": "Clear question text?",
+      "options": ["Option A", "Option B", "Option C", "Option D"],
+      "correctAnswer": 0,
+      "explanation": "Why option A is correct"
+    }
+  ]
+}
+
+IMPORTANT: Verify each correctAnswer matches the actual correct option before responding.`
 
 export async function POST(request: NextRequest) {
   try {
@@ -31,7 +52,7 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = getSystemPrompt(questionCount, difficulty)
-    const userPrompt = `Create a ${difficulty} test with ${questionCount} multiple choice questions based on these ${images.length} image${images.length > 1 ? 's' : ''}. Return valid JSON only.`
+    const userPrompt = `Create a ${difficulty} test with ${questionCount} multiple choice questions based on the content in this image. Make sure the correctAnswer field accurately points to the correct option. Return valid JSON only.`
 
     let response: any
 
@@ -66,7 +87,7 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.7,
+              temperature: 0.3,
               max_tokens: 8000
             })
           }).then(res => res.json())
@@ -86,7 +107,7 @@ export async function POST(request: NextRequest) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
               contents: [{ parts: geminiParts }],
-              generationConfig: { temperature: 0.7, maxOutputTokens: 8000 }
+              generationConfig: { temperature: 0.3, maxOutputTokens: 8000 }
             })
           }).then(res => res.json())
 
@@ -110,7 +131,7 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.7,
+              temperature: 0.3,
               max_tokens: 8000
             })
           }).then(res => res.json())
@@ -124,12 +145,12 @@ export async function POST(request: NextRequest) {
               'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-              model: 'meta/llama-3.2-90b-vision-instruct',
+              model: 'z-ai/glm5',
               messages: [
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.7,
+              temperature: 0.3,
               max_tokens: 4096
             })
           }).then(res => res.json())
@@ -140,14 +161,13 @@ export async function POST(request: NextRequest) {
       }
     } else {
       const zai = await ZAI.create()
-
       response = await zai.chat.completions.create({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content }
         ],
         model: provider === 'openai' ? 'gpt-4o' : provider === 'gemini' ? 'gemini-2.0-flash' : 'deepseek-chat',
-        temperature: 0.7,
+        temperature: 0.3,
         max_tokens: 8000
       })
     }
@@ -165,7 +185,6 @@ export async function POST(request: NextRequest) {
       if (jsonMatch) {
         jsonContent = jsonMatch[1].trim()
       }
-      
       if (!jsonContent.startsWith('{')) {
         const jsonStart = content_result.indexOf('{')
         const jsonEnd = content_result.lastIndexOf('}')
