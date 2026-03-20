@@ -8,28 +8,23 @@ interface ParsePaperRequest {
   apiKey?: string
 }
 
-const getSystemPrompt = () => `You are an expert at parsing and extracting questions from question papers, exams, and quizzes from images.
+const getSystemPrompt = () => `You are an expert at parsing and extracting questions from question papers.
 
-Your task is to carefully analyze ALL provided images and extract ALL questions visible across them. For each question:
-1. Extract the full question text EXACTLY as written
-2. Extract all answer options (A, B, C, D, or similar formats) - remove the letter prefix
-3. Set correctAnswer to null (we don't know which is correct)
-4. Keep the question number as part of the question text
+Extract ALL questions from the image. For each question:
+1. Extract the question text
+2. Extract all options (A, B, C, D text without the letter)
+3. Set correctAnswer to null
 
-CRITICAL: You must respond with ONLY valid JSON. No explanations, no markdown formatting around the JSON. Just the raw JSON object.
+IMPORTANT: Return ONLY valid JSON. No markdown. No explanations.
 
-Example output format:
-{"title":"SSC CGL Number System Questions","description":"Questions from SSC CGL exam on Number System","sourceType":"parsed_paper","questions":[{"id":1,"question":"If a number is multiplied by 5 and then 5 is added, the result is 30. What is the number?","options":["4","5","6","7"],"correctAnswer":null,"explanation":""}]}
+Example:
+{"title":"SSC CGL Questions","description":"Number System questions","sourceType":"parsed_paper","questions":[{"id":1,"question":"What is 2+2?","options":["3","4","5","6"],"correctAnswer":null,"explanation":""}]}
 
 Rules:
-- Extract questions EXACTLY as written in the image, including any Hindi/English text
-- For options, extract the full text after the letter (A, B, C, D)
-- If a question has 4 options, include all 4
-- If a question has 5 options (a, b, c, d, e), include all 5
-- Number questions sequentially starting from 1
-- Do NOT skip any questions
-- Handle both English and Hindi text
-- Return ONLY the JSON, no other text`
+- Extract ALL visible questions
+- Keep question numbers in the text
+- Handle Hindi/English text
+- Return ONLY the JSON object`
 
 export async function POST(request: NextRequest) {
   try {
@@ -43,7 +38,7 @@ export async function POST(request: NextRequest) {
     }
 
     const systemPrompt = getSystemPrompt()
-    const userPrompt = `Please extract all questions from these ${imageUrls.length} question paper image${imageUrls.length > 1 ? 's' : ''}. Return the data in the specified JSON format.`
+    const userPrompt = `Extract all questions from this question paper image. Return valid JSON only.`
 
     let response: any
 
@@ -78,8 +73,8 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.3,
-              max_tokens: 8000
+              temperature: 0.2,
+              max_tokens: 16000
             })
           }).then(res => res.json())
           break
@@ -103,8 +98,8 @@ export async function POST(request: NextRequest) {
                 parts: geminiParts
               }],
               generationConfig: {
-                temperature: 0.3,
-                maxOutputTokens: 8000
+                temperature: 0.2,
+                maxOutputTokens: 16000
               }
             })
           }).then(res => res.json())
@@ -133,8 +128,8 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.3,
-              max_tokens: 8000
+              temperature: 0.2,
+              max_tokens: 16000
             })
           }).then(res => res.json())
           break
@@ -152,8 +147,8 @@ export async function POST(request: NextRequest) {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content }
               ],
-              temperature: 0.3,
-              max_tokens: 8000
+              temperature: 0.2,
+              max_tokens: 4096
             })
           }).then(res => res.json())
           break
@@ -164,14 +159,13 @@ export async function POST(request: NextRequest) {
     } else {
       const zai = await ZAI.create()
 
-      response = await zai.chat.completions.create({
+      response = await zai.chat.completions.createVision({
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content }
         ],
-        model: provider === 'openai' ? 'gpt-4o' : provider === 'gemini' ? 'gemini-2.0-flash' : 'deepseek-chat',
-        temperature: 0.3,
-        max_tokens: 8000
+        temperature: 0.2,
+        max_tokens: 16000
       })
     }
 
@@ -202,8 +196,24 @@ export async function POST(request: NextRequest) {
 
       if (!testData.questions || testData.questions.length === 0) {
         return NextResponse.json({
-          error: 'No questions could be extracted. Please ensure the images clearly show questions with options.',
-          title: testData.title || 'Question Paper',
-          description: testData.description || 'Failed to extract questions',
-          questions: [],
-          raw: content
+          error: 'No questions found. Make sure the image shows questions with options.',
+          questions: []
+        }, { status: 400 })
+      }
+
+      return NextResponse.json(testData)
+    } catch (parseError) {
+      console.error('Parse error:', parseError)
+      return NextResponse.json({
+        error: 'Could not parse questions. Try using Gemini or ChatGPT provider.',
+        raw: content_result.substring(0, 500)
+      }, { status: 500 })
+    }
+
+  } catch (error: any) {
+    console.error('Parse paper error:', error)
+    return NextResponse.json({
+      error: error.message || 'Failed to parse question paper'
+    }, { status: 500 })
+  }
+}
